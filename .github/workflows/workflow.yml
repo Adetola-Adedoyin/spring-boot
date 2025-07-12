@@ -116,6 +116,21 @@ jobs:
         working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform apply -auto-approve tfplan
 
+      - name: Upload Updated State
+  uses: actions/upload-artifact@v4
+  with:
+    name: terraform-state-after-apply
+    path: |
+      devops-springboot-infra/terraform/envs/dev/terraform.tfstate*
+    retention-days: 1
+    
+     - name: Get EC2 IP and Private Key
+  id: get_outputs
+  working-directory: devops-springboot-infra/terraform/envs/dev
+  run: |
+       # Get private key
+    terraform output -raw private_key_pem > ~/.ssh/springboot-key
+    chmod 600 ~/.ssh/springboot-key
       - name: Debug Terraform State
         working-directory: devops-springboot-infra/terraform/envs/dev
         run: |
