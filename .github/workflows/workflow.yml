@@ -7,15 +7,15 @@ on:
 
 env:
   AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   TF_VERSION: 1.8.0
-  TF_WORKING_DIR: devops-springboot-infra/terraform/envs/dev
 
 jobs:
-  terraform-init-plan:
-    name: Terraform Init & Plan
+  terraform-apply:
+    name: Terraform Init, Plan & Apply
     runs-on: ubuntu-latest
-    outputs:
-      tfplan: terraform-plan
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,76 +26,50 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform Init
-        id: init
-        working-directory: ${{ env.TF_WORKING_DIR }}
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform init
 
       - name: Terraform Plan
-        id: plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform plan -out=tfplan
 
-      - name: Upload Terraform Plan
+      - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan
-          path: ${{ env.TF_WORKING_DIR }}/tfplan
-          retention-days: 1
+          name: tfplan
+          path: devops-springboot-infra/terraform/envs/dev/tfplan
 
-  terraform-apply-deploy:
-    name: Terraform Apply & Deploy
-    runs-on: ubuntu-latest
-    needs: terraform-init-plan
-    environment: apply-approval
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Wait for Manual Approval
+        uses: hmarr/auto-approve-action@v3.0.0
+        if: github.event_name == 'workflow_dispatch'
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Terraform Plan
+      - name: Download Plan Artifact
         uses: actions/download-artifact@v4
         with:
-          name: terraform-plan
-          path: ${{ env.TF_WORKING_DIR }}
-
-      - name: Terraform Init
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init
+          name: tfplan
+          path: devops-springboot-infra/terraform/envs/dev
 
       - name: Terraform Apply
-        id: apply
-        working-directory: ${{ env.TF_WORKING_DIR }}
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform apply -auto-approve tfplan
 
-      - name: Get EC2 IP
-        id: get_ip
-        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Extract Outputs (Private Key & EC2 IP)
+        id: outputs
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: |
-          EC2_IP=$(terraform output -raw public_ip)
-          echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
+          terraform output -raw private_key_pem > private_key.pem
+          echo "ec2_ip=$(terraform output -raw ec2_public_ip)" >> $GITHUB_OUTPUT
 
-      - name: SSH and Start Spring Boot App
-        run: |
-          EC2_IP="${{ steps.get_ip.outputs.ec2_ip }}"
-          PRIVATE_KEY_PEM=$(terraform output -raw private_key_pem)
-
-          echo "$PRIVATE_KEY_PEM" > private_key.pem
-          chmod 600 private_key.pem
-
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i private_key.pem ubuntu@$EC2_IP '
-            sudo systemctl start springboot-app.service
-            sudo systemctl enable springboot-app.service
-          '
-          
   terraform-destroy:
-    name: Terraform Destroy
+    name: Terraform Destroy (Manual Approval)
     runs-on: ubuntu-latest
-    needs: terraform-apply-deploy
-    environment: destroy-approval
+    needs: terraform-apply
+    environment:
+      name: destroy-approval
+      url: https://github.com/${{ github.repository }}/environments/destroy-approval
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -106,9 +80,9 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform Init
-        working-directory: ${{ env.TF_WORKING_DIR }}
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform init
 
       - name: Terraform Destroy
-        working-directory: ${{ env.TF_WORKING_DIR }}
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform destroy -auto-approve
