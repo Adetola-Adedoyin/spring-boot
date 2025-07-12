@@ -81,6 +81,13 @@ jobs:
         working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform apply -auto-approve tfplan
 
+      - name: Get Key Name
+        id: get_key_name
+        working-directory: devops-springboot-infra/terraform/envs/dev
+        run: |
+          echo "key_name=$(terraform output -raw key_pair_name)" >> $GITHUB_OUTPUT
+
+
       - name: Extract Private Key
         run: terraform output -raw private_key_pem
 
