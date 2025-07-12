@@ -133,13 +133,13 @@ jobs:
           
           # Check if output exists first
           if terraform output ec2_public_ip &>/dev/null; then
-            EC2_IP=$(terraform output -raw ec2_public_ip)
+            EC2_IP=$(terraform output -raw public_ip)
             echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
             echo "🌐 EC2 Public IP: $EC2_IP"
           else
-            echo "❌ Error: ec2_public_ip output not found in Terraform state"
+            echo "❌ Error: public_ip output not found in Terraform state"
             echo "Please ensure your Terraform configuration includes the required outputs:"
-            echo "output \"ec2_public_ip\" { value = aws_instance.web.public_ip }"
+            echo "output \"public_ip\" { value = aws_instance.web.public_ip }"
             terraform output
             exit 1
           fi
