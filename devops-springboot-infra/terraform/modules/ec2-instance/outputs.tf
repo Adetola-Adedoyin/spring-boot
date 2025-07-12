@@ -17,3 +17,7 @@ output "public_dns" {
   description = "Public DNS name of the instance"
   value       = aws_instance.main.public_dns
 }
+output "private_key_pem" {
+  value = tls_private_key.dev.private_key_pem
+  sensitive = true
+}
