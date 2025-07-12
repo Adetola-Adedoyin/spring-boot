@@ -81,6 +81,9 @@ jobs:
         working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform apply -auto-approve tfplan
 
+      - name: Extract Private Key
+        run: terraform output -raw private_key_pem
+
       - name: Get EC2 IP
         id: get_ip
         working-directory: devops-springboot-infra/terraform/envs/dev
