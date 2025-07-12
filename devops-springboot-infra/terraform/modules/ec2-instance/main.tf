@@ -12,6 +12,10 @@ data "aws_ami" "ubuntu" {
     name   = "virtualization-type"
     values = ["hvm"]
   }
+resource "tls_private_key" "dev" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
 }
 
 # EC2 Instance
