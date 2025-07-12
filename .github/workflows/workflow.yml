@@ -34,6 +34,19 @@ jobs:
         working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform validate
 
+      - name: Check for existing key pairs
+        working-directory: devops-springboot-infra/terraform/envs/dev
+        run: |
+          # Check if any key pairs with our prefix exist and delete them
+          existing_keys=$(aws ec2 describe-key-pairs --query 'KeyPairs[?starts_with(KeyName, `springboot-devops-dev-keypair-`)].KeyName' --output text --region ${{ env.AWS_REGION }} || echo "")
+          if [ ! -z "$existing_keys" ]; then
+            echo "Found existing key pairs: $existing_keys"
+            for key in $existing_keys; do
+              echo "Deleting existing key pair: $key"
+              aws ec2 delete-key-pair --key-name "$key" --region ${{ env.AWS_REGION }}
+            done
+          fi
+
       - name: Terraform Plan
         working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform plan -out=tfplan
