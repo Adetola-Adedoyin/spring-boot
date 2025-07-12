@@ -15,6 +15,8 @@ jobs:
   terraform-apply:
     name: Terraform Init, Plan & Apply
     runs-on: ubuntu-latest
+    environment:
+      name: apply-approval # ✅ Enforces manual approval before apply runs
 
     steps:
       - name: Checkout code
@@ -31,29 +33,12 @@ jobs:
 
       - name: Terraform Plan
         working-directory: devops-springboot-infra/terraform/envs/dev
-        run: terraform plan -out=tfplan
+        run: terraform plan
 
-      - name: Upload Plan Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: devops-springboot-infra/terraform/envs/dev/tfplan
-
-      - name: Wait for Manual Approval
-        uses: hmarr/auto-approve-action@v3.0.0
-        if: github.event_name == 'workflow_dispatch'
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download Plan Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan
-          path: devops-springboot-infra/terraform/envs/dev
-
+      # 👇 Real terraform apply (not from tfplan file), so outputs are saved to state
       - name: Terraform Apply
         working-directory: devops-springboot-infra/terraform/envs/dev
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -auto-approve
 
       - name: Extract Outputs (Private Key & EC2 IP)
         id: outputs
@@ -67,8 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: terraform-apply
     environment:
-      name: destroy-approval
-      url: https://github.com/${{ github.repository }}/environments/destroy-approval
+      name: destroy-approval # ✅ Another manual approval step before destroy
 
     steps:
       - name: Checkout code
