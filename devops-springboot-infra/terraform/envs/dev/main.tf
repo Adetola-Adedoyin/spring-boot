@@ -36,11 +36,11 @@ resource "tls_private_key" "dev" {
 
 # Create AWS key pair for the dev environment
 resource "aws_key_pair" "dev" {
-  key_name  = "${var.project_name}-${var.environment}-keypair-{random_id.suffix.hex}"
+  key_name  = "${var.project_name}-${var.environment}-keypair-${random_id.suffix.hex}"
   public_key = tls_private_key.dev.public_key_openssh
 
   tags = {
-    Name        = "${var.project_name}-${var.environment}-keypair-{random_id.suffix.hex}"
+    Name        = "${var.project_name}-${var.environment}-keypair-${random_id.suffix.hex}"
     Environment = var.environment
     Project     = var.project_name
   }
