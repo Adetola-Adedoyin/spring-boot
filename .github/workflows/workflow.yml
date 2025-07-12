@@ -1,95 +1,23 @@
-name: Spring Boot Infrastructure CI/CD Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+    branches: [master]
   workflow_dispatch:
 
 env:
-  TF_VERSION: "1.5.0"
-  AWS_REGION: "us-east-1"
-  TF_VAR_region: "us-east-1"
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_VERSION: 1.8.0
 
 jobs:
-  # 🟦 Stage 1: Terraform Init & Plan
-  terraform-plan:
-    name: "Terraform Plan"
+
+  terraform-init-plan:
+    name: Terraform Init & Plan
     runs-on: ubuntu-latest
-    outputs:
-      tfplan-exists: ${{ steps.plan.outputs.tfplan-exists }}
-    
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Terraform Plan
-        id: plan
-        run: |
-          terraform plan -out=tfplan
-          echo "tfplan-exists=true" >> $GITHUB_OUTPUT
-
-      - name: Upload Terraform Plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: tfplan
-          retention-days: 1
-
-      - name: Upload Terraform State Files
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-files
-          path: |
-            .terraform/
-            *.tf
-            *.tfvars
-          retention-days: 1
-
-  approve-apply:
-    name: "Manual Approval - Apply Infrastructure"
-    runs-on: ubuntu-latest
-    needs: terraform-plan
-    environment: 
-      name: apply-approval
-      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    
-    steps:
-      - name: Manual Approval Required
-        run: |
-          echo " Terraform plan completed successfully"
-          echo " Please review the plan and approve to proceed with infrastructure provisioning"
-          echo " This will create/modify AWS resources as defined in the Terraform configuration"
-
-  terraform-apply:
-    name: "Terraform Apply & Extract Outputs"
-    runs-on: ubuntu-latest
-    needs: [terraform-plan, approve-apply]
-    outputs:
-      ec2-public-ip: ${{ steps.extract-outputs.outputs.ec2-public-ip }}
-      private-key-written: ${{ steps.extract-outputs.outputs.private-key-written }}
-    
-    steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Terraform
@@ -98,142 +26,190 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Terraform Init
+        working-directory: devops-springboot-infra/terraform/envs/dev
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: devops-springboot-infra/terraform/envs/dev
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: devops-springboot-infra/terraform/envs/dev
+        run: terraform plan -out=tfplan
+
+      - name: Save Terraform Plan
+        uses: actions/upload-artifact@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          name: tfplan
+          path: devops-springboot-infra/terraform/envs/dev/tfplan
+          retention-days: 1
+
+      - name: Save Terraform Directory
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-dir
+          path: devops-springboot-infra/terraform/envs/dev/
+          retention-days: 1
+
+
+  approval-apply:
+    name: Wait for Approval Before Apply
+    runs-on: ubuntu-latest
+    needs: terraform-init-plan
+    environment:
+      name: apply-approval
+    steps:
+      - name: Approval Gate
+        run: |
+          echo "🔍 Terraform plan completed successfully"
+          echo "👀 Please review the plan and approve to proceed with infrastructure provisioning"
+          echo "📋 This will create/modify AWS resources as defined in the Terraform configuration"
+
+
+  terraform-apply:
+    name: Terraform Apply and Extract Outputs
+    runs-on: ubuntu-latest
+    needs: approval-apply
+    outputs:
+      ec2_ip: ${{ steps.get_ip.outputs.ec2_ip }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
 
       - name: Download Terraform Plan
         uses: actions/download-artifact@v4
         with:
           name: tfplan
+          path: devops-springboot-infra/terraform/envs/dev
 
-      - name: Download Terraform Files
+      - name: Download Terraform Directory
         uses: actions/download-artifact@v4
         with:
-          name: terraform-files
+          name: terraform-dir
+          path: devops-springboot-infra/terraform/envs/dev
 
       - name: Terraform Init
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform init
 
       - name: Terraform Apply
-        run: terraform apply tfplan
+        working-directory: devops-springboot-infra/terraform/envs/dev
+        run: terraform apply -auto-approve tfplan
 
-      - name: Extract Terraform Outputs
-        id: extract-outputs
+      - name: Get EC2 IP
+        id: get_ip
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: |
-          # Extract EC2 public IP
-          EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip)
-          echo "ec2-public-ip=$EC2_PUBLIC_IP" >> $GITHUB_OUTPUT
-          echo " EC2 Public IP: $EC2_PUBLIC_IP"
-          
-          # Extract private key and write to file
+          EC2_IP=$(terraform output -raw ec2_public_ip)
+          echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
+          echo "🌐 EC2 Public IP: $EC2_IP"
+
+      - name: Extract Private Key
+        working-directory: devops-springboot-infra/terraform/envs/dev
+        run: |
           terraform output -raw private_key_pem > private_key.pem
           chmod 600 private_key.pem
-          echo "private-key-written=true" >> $GITHUB_OUTPUT
-          echo " Private key extracted and secured"
+          echo "🔐 Private key extracted and secured"
 
-      - name: Upload Private Key
+      - name: Save Private Key
         uses: actions/upload-artifact@v4
         with:
           name: private-key
-          path: private_key.pem
+          path: devops-springboot-infra/terraform/envs/dev/private_key.pem
           retention-days: 1
 
-      - name: Upload Terraform State
+      - name: Save Terraform State
         uses: actions/upload-artifact@v4
         with:
           name: terraform-state
-          path: |
-            terraform.tfstate
-            .terraform/
+          path: devops-springboot-infra/terraform/envs/dev/
           retention-days: 1
 
-  deploy-application:
-    name: "Deploy Spring Boot Application"
+
+  deploy-app:
+    name: Deploy Spring Boot App
     runs-on: ubuntu-latest
     needs: terraform-apply
-    
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Download Private Key
         uses: actions/download-artifact@v4
         with:
           name: private-key
+          path: ./
 
       - name: Setup SSH Key
         run: |
           chmod 600 private_key.pem
-          eval $(ssh-agent -s)
-          ssh-add private_key.pem
+          echo "🔑 SSH key configured"
 
       - name: Wait for EC2 Instance to be Ready
         run: |
           echo "⏳ Waiting for EC2 instance to be fully ready..."
           sleep 30
 
-      - name: Deploy Spring Boot Application
+      - name: SSH and Start Spring Boot App
         run: |
-          EC2_IP="${{ needs.terraform-apply.outputs.ec2-public-ip }}"
+          EC2_IP="${{ needs.terraform-apply.outputs.ec2_ip }}"
+          echo "🚀 Deploying application to EC2 instance: $EC2_IP"
           
-          # SSH options for strict host key checking
-          SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
-          
-          echo " Deploying application to EC2 instance: $EC2_IP"
-          
-          # Connect to EC2 and start the Spring Boot service
-          ssh $SSH_OPTS -i private_key.pem ec2-user@$EC2_IP << 'EOF'
-            echo " Starting Spring Boot application service..."
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 \
+              -i private_key.pem ubuntu@$EC2_IP << 'EOF'
+            echo "📦 Starting Spring Boot application service..."
             
-            # Check if service exists
+            # Check if service exists and start it
             if systemctl list-unit-files | grep -q springboot-app.service; then
-              echo "✅Service found, starting springboot-app.service"
+              echo "✅ Service found, starting springboot-app.service"
               sudo systemctl start springboot-app.service
               sudo systemctl enable springboot-app.service
               
               # Check service status
-              sudo systemctl status springboot-app.service
+              sudo systemctl status springboot-app.service --no-pager
               
-              echo " Spring Boot application deployed successfully!"
+              echo "🎉 Spring Boot application deployed successfully!"
             else
-              echo " springboot-app.service not found. Please ensure the service is properly configured."
+              echo "⚠️  springboot-app.service not found. Please ensure the service is properly configured."
               exit 1
             fi
           EOF
 
-      - name: Verify Application Deployment
+      - name: Verify Deployment
         run: |
-          EC2_IP="${{ needs.terraform-apply.outputs.ec2-public-ip }}"
-          echo " Verifying application deployment..."
-          echo " Application should be accessible at: http://$EC2_IP:8080"
-          
-          # Optional: Add health check
-          # curl -f http://$EC2_IP:8080/actuator/health || echo "Health check failed"
+          EC2_IP="${{ needs.terraform-apply.outputs.ec2_ip }}"
+          echo "🔍 Verifying application deployment..."
+          echo "📍 Application should be accessible at: http://$EC2_IP:8080"
 
-  approve-destroy:
-    name: "Manual Approval - Destroy Infrastructure"
+
+  manual-destroy-approval:
+    name: Manual Approval to Destroy
     runs-on: ubuntu-latest
-    needs: deploy-application
-    environment: 
+    needs: deploy-app
+    environment:
       name: destroy-approval
-      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    
     steps:
-      - name: Manual Approval Required
+      - name: Wait for Approval to Destroy
         run: |
-          echo " Infrastructure and application deployment completed successfully"
-          echo "Approve this step to destroy the infrastructure and save costs"
-          echo "This will completely tear down all AWS resources"
-          echo "EC2 Instance IP: ${{ needs.terraform-apply.outputs.ec2-public-ip }}"
+          echo "🏗️  Infrastructure and application deployment completed successfully"
+          echo "💰 Approve this step to destroy the infrastructure and save costs"
+          echo "⚠️  This will completely tear down all AWS resources"
+          echo "📍 EC2 Instance IP: ${{ needs.terraform-apply.outputs.ec2_ip }}"
 
-    terraform-destroy:
-    - name: "Terraform Destroy"
-      runs-on: ubuntu-latest
-      needs: [terraform-apply, approve-destroy]
-    
+
+  terraform-destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    needs: manual-destroy-approval
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup Terraform
@@ -241,29 +217,25 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Download Terraform State
         uses: actions/download-artifact@v4
         with:
           name: terraform-state
+          path: devops-springboot-infra/terraform/envs/dev
 
       - name: Terraform Init
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: terraform init
 
       - name: Terraform Destroy
+        working-directory: devops-springboot-infra/terraform/envs/dev
         run: |
-          echo " Destroying infrastructure..."
+          echo "💥 Destroying infrastructure..."
           terraform destroy -auto-approve
-          echo " Infrastructure destroyed successfully"
+          echo "✅ Infrastructure destroyed successfully"
 
-      - name: Cleanup Artifacts
+      - name: Cleanup
         run: |
-          echo " Cleaning up sensitive artifacts..."
+          echo "🧹 Cleaning up sensitive artifacts..."
           rm -f private_key.pem
-          echo " Cleanup completed"
+          echo "✅ Cleanup completed"
