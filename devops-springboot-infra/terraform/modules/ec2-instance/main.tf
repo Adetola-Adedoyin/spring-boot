@@ -13,7 +13,6 @@ data "aws_ami" "ubuntu" {
     values = ["hvm"]
   }
 }
-}
 resource "tls_private_key" "dev" {
   algorithm = "RSA"
   rsa_bits  = 4096
